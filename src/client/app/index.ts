@@ -1,40 +1,54 @@
+import RawTheme from '@theme/index'
 import {
-  type App,
   createApp as createClientApp,
   createSSRApp,
   defineComponent,
   h,
   onMounted,
-  watchEffect
+  watchEffect,
+  type App
 } from 'vue'
-import Theme from '@theme/index'
-import { inBrowser, pathToFile } from './utils.js'
-import { type Router, RouterSymbol, createRouter } from './router.js'
-import { siteDataRef, useData } from './data.js'
-import { useUpdateHead } from './composables/head.js'
-import { usePrefetch } from './composables/preFetch.js'
-import { dataSymbol, initData } from './data.js'
-import { Content } from './components/Content.js'
-import { ClientOnly } from './components/ClientOnly.js'
-import { useCopyCode } from './composables/copyCode.js'
-import { useCodeGroups } from './composables/codeGroups.js'
+import { ClientOnly } from './components/ClientOnly'
+import { Content } from './components/Content'
+import { useCodeGroups } from './composables/codeGroups'
+import { useCopyCode } from './composables/copyCode'
+import { useUpdateHead } from './composables/head'
+import { usePrefetch } from './composables/preFetch'
+import { dataSymbol, initData, siteDataRef, useData } from './data'
+import { RouterSymbol, createRouter, scrollTo, type Router } from './router'
+import { inBrowser, pathToFile } from './utils'
 
-const NotFound = Theme.NotFound || (() => '404 Not Found')
+function resolveThemeExtends(theme: typeof RawTheme): typeof RawTheme {
+  if (theme.extends) {
+    const base = resolveThemeExtends(theme.extends)
+    return {
+      ...base,
+      ...theme,
+      async enhanceApp(ctx) {
+        if (base.enhanceApp) await base.enhanceApp(ctx)
+        if (theme.enhanceApp) await theme.enhanceApp(ctx)
+      }
+    }
+  }
+  return theme
+}
+
+const Theme = resolveThemeExtends(RawTheme)
 
 const VitePressApp = defineComponent({
   name: 'VitePressApp',
   setup() {
-    const { site } = useData()
+    const { site, lang, dir } = useData()
 
     // change the language on the HTML element based on the current lang
     onMounted(() => {
       watchEffect(() => {
-        document.documentElement.lang = site.value.lang
-        document.documentElement.dir = site.value.dir
+        document.documentElement.lang = lang.value
+        document.documentElement.dir = dir.value
       })
     })
 
-    if (import.meta.env.PROD) {
+    if (import.meta.env.PROD && site.value.router.prefetchLinks) {
       // in prod mode, enable intersectionObserver based pre-fetch
       usePrefetch()
     }
@@ -45,11 +59,13 @@ const VitePressApp = defineComponent({
     useCodeGroups()
 
     if (Theme.setup) Theme.setup()
-    return () => h(Theme.Layout)
+    return () => h(Theme.Layout!)
   }
 })
 
 export async function createApp() {
+  ;(globalThis as any).__VITEPRESS__ = true
+
   const router = newRouter()
 
   const app = newApp()
@@ -59,17 +75,21 @@ export async function createApp() {
   const data = initData(router.route)
   app.provide(dataSymbol, data)
 
-  // provide this to avoid circular dependency in VPContent
-  app.provide('NotFound', NotFound)
-
   // install global components
   app.component('Content', Content)
   app.component('ClientOnly', ClientOnly)
 
-  // expose $frontmatter
-  Object.defineProperty(app.config.globalProperties, '$frontmatter', {
-    get() {
-      return data.frontmatter.value
+  // expose $frontmatter & $params
+  Object.defineProperties(app.config.globalProperties, {
+    $frontmatter: {
+      get() {
+        return data.frontmatter.value
+      }
+    },
+    $params: {
+      get() {
+        return data.page.value.params
+      }
     }
   })
 
@@ -99,37 +119,55 @@ function newApp(): App {
 
 function newRouter(): Router {
   let isInitialPageLoad = inBrowser
-  let initialPath: string
 
   return createRouter((path) => {
     let pageFilePath = pathToFile(path)
+    let pageModule = null
 
-    if (isInitialPageLoad) {
-      initialPath = pageFilePath
-    }
+    if (pageFilePath) {
+      // use lean build if this is the initial page load
+      if (isInitialPageLoad) {
+        pageFilePath = pageFilePath.replace(/\.js$/, '.lean.js')
+      }
 
-    // use lean build if this is the initial page load or navigating back
-    // to the initial loaded path (the static vnodes already adopted the
-    // static content on that load so no need to re-fetch the page)
-    if (isInitialPageLoad || initialPath === pageFilePath) {
-      pageFilePath = pageFilePath.replace(/\.js$/, '.lean.js')
+      if (import.meta.env.DEV) {
+        pageModule = import(/*@vite-ignore*/ pageFilePath).catch(() => {
+          // try with/without trailing slash
+          // in prod this is handled in src/client/app/utils.ts#pathToFile
+          const url = new URL(pageFilePath!, 'http://a.com')
+          const path =
+            (url.pathname.endsWith('/index.md')
+              ? url.pathname.slice(0, -9) + '.md'
+              : url.pathname.slice(0, -3) + '/index.md') +
+            url.search +
+            url.hash
+          return import(/*@vite-ignore*/ path)
+        })
+      } else {
+        pageModule = import(/*@vite-ignore*/ pageFilePath)
+      }
     }
 
     if (inBrowser) {
       isInitialPageLoad = false
     }
 
-    return import(/*@vite-ignore*/ pageFilePath)
-  }, NotFound)
+    return pageModule
+  }, Theme.NotFound)
 }
 
 if (inBrowser) {
   createApp().then(({ app, router, data }) => {
     // wait until page component is fetched before mounting
-    router.go().then(() => {
+    router.go(location.href, { initialLoad: true }).then(() => {
       // dynamically update head tags
       useUpdateHead(router.route, data.site)
       app.mount('#app')
+
+      // scroll to hash on new tab during dev
+      if (import.meta.env.DEV && location.hash) {
+        scrollTo(location.hash)
+      }
     })
   })
 }

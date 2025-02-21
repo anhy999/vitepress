@@ -3,9 +3,13 @@
 // 2. normalize internal links to end with `.html`
 
 import type MarkdownIt from 'markdown-it'
-import type { MarkdownEnv } from '../env'
-import { URL } from 'url'
-import { EXTERNAL_URL_RE, PATHNAME_PROTOCOL_RE } from '../../shared'
+import { URL } from 'node:url'
+import {
+  EXTERNAL_URL_RE,
+  isExternal,
+  treatAsHtml,
+  type MarkdownEnv
+} from '../../shared'
 
 const indexRE = /(^|.*\/)index.md(#?.*)$/i
 
@@ -23,11 +27,12 @@ export const linkPlugin = (
   ) => {
     const token = tokens[idx]
     const hrefIndex = token.attrIndex('href')
-    if (hrefIndex >= 0) {
+    const targetIndex = token.attrIndex('target')
+    const downloadIndex = token.attrIndex('download')
+    if (hrefIndex >= 0 && targetIndex < 0 && downloadIndex < 0) {
       const hrefAttr = token.attrs![hrefIndex]
       const url = hrefAttr[1]
-      const isExternal = EXTERNAL_URL_RE.test(url)
-      if (isExternal) {
+      if (isExternal(url)) {
         Object.entries(externalAttrs).forEach(([key, val]) => {
           token.attrSet(key, val)
         })
@@ -35,24 +40,28 @@ export const linkPlugin = (
         if (url.replace(EXTERNAL_URL_RE, '').startsWith('//localhost:')) {
           pushLink(url, env)
         }
-        hrefAttr[1] = url.replace(PATHNAME_PROTOCOL_RE, '')
-      } else if (
-        // internal anchor links
-        !url.startsWith('#') &&
-        // mail links
-        !url.startsWith('mailto:') &&
-        // links to files (other than html/md)
-        !/\.(?!html|md)\w+($|\?)/i.test(url)
-      ) {
-        normalizeHref(hrefAttr, env)
-      }
+        hrefAttr[1] = url
+      } else {
+        const { pathname, protocol } = new URL(url, 'http://a.com')
 
-      // encode vite-specific replace strings in case they appear in URLs
-      // this also excludes them from build-time replacements (which injects
-      // <wbr/> and will break URLs)
-      hrefAttr[1] = hrefAttr[1]
-        .replace(/\bimport\.meta/g, 'import%2Emeta')
-        .replace(/\bprocess\.env/g, 'process%2Eenv')
+        if (
+          // skip internal anchor links
+          !url.startsWith('#') &&
+          // skip mail/custom protocol links
+          protocol.startsWith('http') &&
+          // skip links to files (other than html/md)
+          treatAsHtml(pathname)
+        ) {
+          normalizeHref(hrefAttr, env)
+        } else if (url.startsWith('#')) {
+          hrefAttr[1] = decodeURI(hrefAttr[1])
+        }
+
+        // append base to internal (non-relative) urls
+        if (hrefAttr[1].startsWith('/')) {
+          hrefAttr[1] = `${base}${hrefAttr[1]}`.replace(/\/+/g, '/')
+        }
+      }
     }
     return self.renderToken(tokens, idx, options)
   }
@@ -68,14 +77,11 @@ export const linkPlugin = (
       let cleanUrl = url.replace(/[?#].*$/, '')
       // transform foo.md -> foo[.html]
       if (cleanUrl.endsWith('.md')) {
-        cleanUrl = cleanUrl.replace(
-          /\.md$/,
-          env.cleanUrls === 'disabled' ? '.html' : ''
-        )
+        cleanUrl = cleanUrl.replace(/\.md$/, env.cleanUrls ? '' : '.html')
       }
       // transform ./foo -> ./foo[.html]
       if (
-        env.cleanUrls === 'disabled' &&
+        !env.cleanUrls &&
         !cleanUrl.endsWith('.html') &&
         !cleanUrl.endsWith('/')
       ) {
@@ -86,17 +92,12 @@ export const linkPlugin = (
     }
 
     // ensure leading . for relative paths
-    if (!url.startsWith('/') && !/^\.\//.test(url)) {
+    if (!url.startsWith('/') && !url.startsWith('./')) {
       url = './' + url
     }
 
     // export it for existence check
     pushLink(url.replace(/\.html$/, ''), env)
-
-    // append base to internal (non-relative) urls
-    if (url.startsWith('/')) {
-      url = `${base}${url}`.replace(/\/+/g, '/')
-    }
 
     // markdown-it encodes the uri
     hrefAttr[1] = decodeURI(url)

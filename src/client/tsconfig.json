@@ -3,14 +3,9 @@
   "compilerOptions": {
     "baseUrl": ".",
     "outDir": "../../dist/client",
-    "target": "esnext",
-    "module": "esnext",
-    "moduleResolution": "nodenext",
     "declaration": true,
     "declarationDir": "../../dist/client-types",
-    "jsx": "preserve",
-    "lib": ["ESNext", "DOM"],
-    "types": ["vite/client"],
+    "types": ["vite/client", "@types/node"],
     "paths": {
       "vitepress": ["index.ts"],
       "vitepress/theme": ["../../theme.d.ts"]
