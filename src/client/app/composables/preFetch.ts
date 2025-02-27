@@ -1,9 +1,9 @@
 // Customized pre-fetch for page chunks based on
 // https://github.com/GoogleChromeLabs/quicklink
 
-import { useRoute } from '../router.js'
 import { onMounted, onUnmounted, watch } from 'vue'
-import { inBrowser, pathToFile } from '../utils.js'
+import { useRoute } from '../router'
+import { inBrowser, pathToFile } from '../utils'
 
 const hasFetched = new Set<string>()
 const createLink = () => document.createElement('link')
@@ -66,39 +66,46 @@ export function usePrefetch() {
           if (!hasFetched.has(pathname)) {
             hasFetched.add(pathname)
             const pageChunkPath = pathToFile(pathname)
-            doFetch(pageChunkPath)
+            if (pageChunkPath) doFetch(pageChunkPath)
           }
         }
       })
     })
 
     rIC(() => {
-      document.querySelectorAll<HTMLAnchorElement>('#app a').forEach((link) => {
-        const { target, hostname, pathname } = link
-        const extMatch = pathname.match(/\.\w+$/)
-        if (extMatch && extMatch[0] !== '.html') {
-          return
-        }
-
-        if (
-          // only prefetch same tab navigation, since a new tab will load
-          // the lean js chunk instead.
-          target !== `_blank` &&
-          // only prefetch inbound links
-          hostname === location.hostname
-        ) {
-          if (pathname !== location.pathname) {
-            observer!.observe(link)
-          } else {
-            // No need to prefetch chunk for the current page, but also mark
-            // it as already fetched. This is because the initial page uses its
-            // lean chunk, and if we don't mark it, navigation to another page
-            // with a link back to the first page will fetch its full chunk
-            // which isn't needed.
-            hasFetched.add(pathname)
+      document
+        .querySelectorAll<HTMLAnchorElement | SVGAElement>('#app a')
+        .forEach((link) => {
+          const { hostname, pathname } = new URL(
+            link.href instanceof SVGAnimatedString
+              ? link.href.animVal
+              : link.href,
+            link.baseURI
+          )
+          const extMatch = pathname.match(/\.\w+$/)
+          if (extMatch && extMatch[0] !== '.html') {
+            return
           }
-        }
-      })
+
+          if (
+            // only prefetch same tab navigation, since a new tab will load
+            // the lean js chunk instead.
+            link.target !== '_blank' &&
+            // only prefetch inbound links
+            hostname === location.hostname
+          ) {
+            if (pathname !== location.pathname) {
+              observer!.observe(link)
+            } else {
+              // No need to prefetch chunk for the current page, but also mark
+              // it as already fetched. This is because the initial page uses its
+              // lean chunk, and if we don't mark it, navigation to another page
+              // with a link back to the first page will fetch its full chunk
+              // which isn't needed.
+              hasFetched.add(pathname)
+            }
+          }
+        })
     })
   }
 
