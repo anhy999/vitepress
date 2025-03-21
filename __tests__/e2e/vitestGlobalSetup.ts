@@ -1,13 +1,13 @@
 import getPort from 'get-port'
-import { Server } from 'net'
+import type { Server } from 'node:net'
 import { chromium, type BrowserServer } from 'playwright-chromium'
-import { type ViteDevServer } from 'vite'
+import type { ViteDevServer } from 'vite'
 import { build, createServer, serve } from 'vitepress'
 
 let browserServer: BrowserServer
 let server: ViteDevServer | Server
 
-const root = '__tests__/e2e'
+const root = '.'
 
 export async function setup() {
   browserServer = await chromium.launchServer({

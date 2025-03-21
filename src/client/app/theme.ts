@@ -1,6 +1,6 @@
-import type { App, Ref, Component } from 'vue'
-import type { Router } from './router.js'
-import type { Awaitable, SiteData } from '../shared.js'
+import type { App, Component, Ref } from 'vue'
+import type { Awaitable, SiteData } from '../shared'
+import type { Router } from './router'
 
 export interface EnhanceAppContext {
   app: App
@@ -9,8 +9,17 @@ export interface EnhanceAppContext {
 }
 
 export interface Theme {
-  Layout: Component
-  NotFound?: Component
+  Layout?: Component
   enhanceApp?: (ctx: EnhanceAppContext) => Awaitable<void>
+  extends?: Theme
+
+  /**
+   * @deprecated can be replaced by wrapping layout component
+   */
   setup?: () => void
+
+  /**
+   * @deprecated Render not found page by checking `useData().page.value.isNotFound` in Layout instead.
+   */
+  NotFound?: Component
 }
